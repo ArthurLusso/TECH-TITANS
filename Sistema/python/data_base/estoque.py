@@ -9,7 +9,6 @@ CATEGORIAS = [
     "Bebidas"
 ]
 
-
 UNIDADES = [
     "kg",
     "g",
@@ -35,7 +34,6 @@ def listar_ingredientes(categoria=None):
                 """,
                 (categoria,)
             ).fetchall()
-
         else:
             resultado = conexao.execute(
                 """
@@ -51,34 +49,44 @@ def listar_ingredientes(categoria=None):
         conexao.close()
 
 
-def cadastrar_ingrediente(
-    nome,
-    categoria,
-    quantidade,
-    unidade,
-    estoque_minimo
-):
+def listar_variacoes(ingrediente_id):
+
+    conexao = conectar()
+
+    try:
+        resultado = conexao.execute(
+            """
+            SELECT *
+            FROM variacoes_ingrediente
+            WHERE ingrediente_id = ?
+            ORDER BY nome
+            """,
+            (ingrediente_id,)
+        ).fetchall()
+
+        return [dict(item) for item in resultado]
+
+    finally:
+        conexao.close()
+
+
+def cadastrar_ingrediente(nome, categoria):
 
     nome = nome.strip()
 
     if not nome:
-        raise ValueError("Informe o nome do ingrediente.")
+        raise ValueError("Informe o nome do grupo.")
 
     if categoria not in CATEGORIAS:
         raise ValueError("Categoria inválida.")
-
-    if unidade not in UNIDADES:
-        raise ValueError("Unidade inválida.")
-
-    if quantidade < 0 or estoque_minimo < 0:
-        raise ValueError("As quantidades não podem ser negativas.")
 
     conexao = conectar()
 
     try:
         existente = conexao.execute(
             """
-            SELECT id FROM ingredientes
+            SELECT id
+            FROM ingredientes
             WHERE nome = ? COLLATE NOCASE
             AND categoria = ?
             """,
@@ -87,7 +95,7 @@ def cadastrar_ingrediente(
 
         if existente:
             raise ValueError(
-                "Já existe um ingrediente com esse nome nessa categoria."
+                "Esse grupo já existe nessa categoria."
             )
 
         cursor = conexao.execute(
@@ -99,35 +107,223 @@ def cadastrar_ingrediente(
                 unidade,
                 estoque_minimo
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, 0, 'kg', 0)
             """,
-            (nome, categoria, quantidade, unidade, estoque_minimo)
+            (nome, categoria)
         )
 
-        ingrediente_id = cursor.lastrowid
+        conexao.commit()
+
+        return cursor.lastrowid
+
+    except Exception:
+        conexao.rollback()
+        raise
+
+    finally:
+        conexao.close()
+
+
+def adicionar_variacao(
+    ingrediente_id,
+    nome,
+    quantidade,
+    unidade,
+    estoque_minimo
+):
+
+    nome = nome.strip()
+
+    if not nome:
+        raise ValueError("Informe o nome da variação.")
+
+    if quantidade < 0 or estoque_minimo < 0:
+        raise ValueError("As quantidades não podem ser negativas.")
+
+    if unidade not in UNIDADES:
+        raise ValueError("Unidade inválida.")
+
+    conexao = conectar()
+
+    try:
+        ingrediente = conexao.execute(
+            """
+            SELECT id
+            FROM ingredientes
+            WHERE id = ?
+            """,
+            (ingrediente_id,)
+        ).fetchone()
+
+        if ingrediente is None:
+            raise ValueError("Grupo não encontrado.")
+
+        existente = conexao.execute(
+            """
+            SELECT id
+            FROM variacoes_ingrediente
+            WHERE ingrediente_id = ?
+            AND nome = ? COLLATE NOCASE
+            """,
+            (ingrediente_id, nome)
+        ).fetchone()
+
+        if existente:
+            raise ValueError("Essa variação já existe no grupo.")
+
+        cursor = conexao.execute(
+            """
+            INSERT INTO variacoes_ingrediente (
+                ingrediente_id,
+                nome,
+                quantidade,
+                unidade,
+                estoque_minimo
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                ingrediente_id,
+                nome,
+                quantidade,
+                unidade,
+                estoque_minimo
+            )
+        )
+
+        variacao_id = cursor.lastrowid
 
         if quantidade > 0:
             conexao.execute(
                 """
-                INSERT INTO movimentacoes_estoque (
-                    ingrediente_id,
+                INSERT INTO movimentacoes_variacoes (
+                    variacao_id,
                     tipo,
                     quantidade,
                     motivo
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (?, 'Entrada', ?, ?)
                 """,
                 (
-                    ingrediente_id,
-                    "Entrada",
+                    variacao_id,
                     quantidade,
-                    "Cadastro inicial"
+                    "Estoque inicial da variação"
                 )
             )
 
         conexao.commit()
 
-        return ingrediente_id
+        return variacao_id
+
+    except Exception:
+        conexao.rollback()
+        raise
+
+    finally:
+        conexao.close()
+
+
+def editar_variacao(
+    variacao_id,
+    nome,
+    unidade,
+    estoque_minimo
+):
+
+    nome = nome.strip()
+
+    if not nome:
+        raise ValueError("Informe o nome da variação.")
+
+    if unidade not in UNIDADES:
+        raise ValueError("Unidade inválida.")
+
+    if estoque_minimo < 0:
+        raise ValueError("O estoque mínimo não pode ser negativo.")
+
+    conexao = conectar()
+
+    try:
+        variacao = conexao.execute(
+            """
+            SELECT ingrediente_id
+            FROM variacoes_ingrediente
+            WHERE id = ?
+            """,
+            (variacao_id,)
+        ).fetchone()
+
+        if variacao is None:
+            raise ValueError("Variação não encontrada.")
+
+        existente = conexao.execute(
+            """
+            SELECT id
+            FROM variacoes_ingrediente
+            WHERE ingrediente_id = ?
+            AND nome = ? COLLATE NOCASE
+            AND id != ?
+            """,
+            (variacao["ingrediente_id"], nome, variacao_id)
+        ).fetchone()
+
+        if existente:
+            raise ValueError("Já existe uma variação com esse nome.")
+
+        conexao.execute(
+            """
+            UPDATE variacoes_ingrediente
+            SET nome = ?,
+                unidade = ?,
+                estoque_minimo = ?
+            WHERE id = ?
+            """,
+            (nome, unidade, estoque_minimo, variacao_id)
+        )
+
+        conexao.commit()
+
+    except Exception:
+        conexao.rollback()
+        raise
+
+    finally:
+        conexao.close()
+
+
+def remover_variacao(variacao_id):
+
+    conexao = conectar()
+
+    try:
+        historico = conexao.execute(
+            """
+            SELECT id
+            FROM movimentacoes_variacoes
+            WHERE variacao_id = ?
+            LIMIT 1
+            """,
+            (variacao_id,)
+        ).fetchone()
+
+        if historico:
+            raise ValueError(
+                "Essa variação possui histórico de movimentações "
+                "e não pode ser removida."
+            )
+
+        resultado = conexao.execute(
+            """
+            DELETE FROM variacoes_ingrediente
+            WHERE id = ?
+            """,
+            (variacao_id,)
+        )
+
+        if resultado.rowcount == 0:
+            raise ValueError("Variação não encontrada.")
+
+        conexao.commit()
 
     except Exception:
         conexao.rollback()
@@ -138,7 +334,7 @@ def cadastrar_ingrediente(
 
 
 def movimentar_estoque(
-    ingrediente_id,
+    variacao_id,
     tipo,
     quantidade,
     motivo=""
@@ -153,21 +349,24 @@ def movimentar_estoque(
     conexao = conectar()
 
     try:
-        ingrediente = conexao.execute(
+        conexao.execute("BEGIN IMMEDIATE")
+
+        variacao = conexao.execute(
             """
             SELECT quantidade
-            FROM ingredientes
+            FROM variacoes_ingrediente
             WHERE id = ?
             """,
-            (ingrediente_id,)
+            (variacao_id,)
         ).fetchone()
 
-        if ingrediente is None:
-            raise ValueError("Ingrediente não encontrado.")
+        if variacao is None:
+            raise ValueError("Variação não encontrada.")
 
-        estoque_atual = ingrediente["quantidade"]
+        estoque_atual = variacao["quantidade"]
 
         if tipo == "Saída":
+
             if quantidade > estoque_atual:
                 raise ValueError(
                     "Estoque insuficiente para essa saída."
@@ -180,25 +379,24 @@ def movimentar_estoque(
 
         conexao.execute(
             """
-            UPDATE ingredientes
-            SET quantidade = ?,
-                atualizado_em = CURRENT_TIMESTAMP
+            UPDATE variacoes_ingrediente
+            SET quantidade = ?
             WHERE id = ?
             """,
-            (novo_estoque, ingrediente_id)
+            (novo_estoque, variacao_id)
         )
 
         conexao.execute(
             """
-            INSERT INTO movimentacoes_estoque (
-                ingrediente_id,
+            INSERT INTO movimentacoes_variacoes (
+                variacao_id,
                 tipo,
                 quantidade,
                 motivo
             )
             VALUES (?, ?, ?, ?)
             """,
-            (ingrediente_id, tipo, quantidade, motivo)
+            (variacao_id, tipo, quantidade, motivo)
         )
 
         conexao.commit()
@@ -208,6 +406,27 @@ def movimentar_estoque(
     except Exception:
         conexao.rollback()
         raise
+
+    finally:
+        conexao.close()
+
+
+def listar_movimentacoes(variacao_id):
+
+    conexao = conectar()
+
+    try:
+        resultado = conexao.execute(
+            """
+            SELECT tipo, quantidade, motivo, data_movimentacao
+            FROM movimentacoes_variacoes
+            WHERE variacao_id = ?
+            ORDER BY id DESC
+            """,
+            (variacao_id,)
+        ).fetchall()
+
+        return [dict(item) for item in resultado]
 
     finally:
         conexao.close()
