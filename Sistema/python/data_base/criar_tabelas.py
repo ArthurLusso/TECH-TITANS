@@ -31,7 +31,8 @@ def criar_tabelas():
             categoria TEXT,
             preco REAL NOT NULL CHECK (preco >= 0),
             disponivel INTEGER NOT NULL DEFAULT 1,
-            criado_em TEXT DEFAULT CURRENT_TIMESTAMP
+            criado_em TEXT DEFAULT CURRENT_TIMESTAMP,
+            imagem TEXT
         );
 
         CREATE TABLE IF NOT EXISTS ingredientes (
@@ -206,7 +207,8 @@ def criar_tabelas():
         migracoes = {
             "produtos": {
                 "disponivel": "INTEGER NOT NULL DEFAULT 1",
-                "criado_em": "TEXT"
+                "criado_em": "TEXT",
+                "imagem": "TEXT"
             },
             "pedidos": {
                 "rua": "TEXT",

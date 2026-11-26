@@ -18,6 +18,12 @@ paginas = [
     ),
 
     st.Page(
+        "paginas/cardapio.py",
+        title="Cardápio",
+        icon="🌮"
+    ),
+
+    st.Page(
         "paginas/pedidos.py",
         title="Pedidos",
         icon="🛒"
