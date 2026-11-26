@@ -75,7 +75,10 @@ def sincronizar_entregas():
                     status_pedido
                 ))
 
-            elif status_pedido in ("Saiu para entrega", "Entregue"):
+            elif status_pedido in (
+                "Saiu para entrega",
+                "Entregue"
+            ):
 
                 cursor.execute("""
                     UPDATE entregas
@@ -129,7 +132,11 @@ def listar_entregas(busca="", status=None):
                 p.cidade,
                 p.complemento,
                 p.data_pedido,
+                p.subtotal,
+                p.taxa_entrega,
                 p.total,
+                p.forma_pagamento,
+                p.status_pagamento,
                 p.status AS status_pedido
             FROM entregas e
             INNER JOIN pedidos p
@@ -182,6 +189,7 @@ def atualizar_entrega(
         raise ValueError("Status de entrega inválido.")
 
     entregador = entregador.strip() if entregador else ""
+
     previsao_entrega = (
         previsao_entrega.strip()
         if previsao_entrega
@@ -199,7 +207,7 @@ def atualizar_entrega(
         cursor = conexao.cursor()
 
         cursor.execute("""
-            SELECT pedido_id
+            SELECT pedido_id, status
             FROM entregas
             WHERE id = ?
         """, (entrega_id,))
@@ -224,6 +232,22 @@ def atualizar_entrega(
                 "Este pedido não está disponível para entrega."
             )
 
+        status_pedido = pedido["status"]
+
+        transicoes = {
+            "Em preparo": ["Aguardando", "Saiu para entrega"],
+            "Saiu para entrega": ["Saiu para entrega", "Entregue"],
+            "Entregue": ["Entregue"]
+        }
+
+        permitidos = transicoes.get(status_pedido, [])
+
+        if novo_status not in permitidos:
+            raise ValueError(
+                "Essa alteração não corresponde à etapa atual do pedido. "
+                "Verifique o andamento na tela Pedidos."
+            )
+
         cursor.execute("""
             UPDATE entregas
             SET entregador = ?,
@@ -232,12 +256,12 @@ def atualizar_entrega(
                 data_saida = CASE
                     WHEN ? IN ('Saiu para entrega', 'Entregue')
                     THEN COALESCE(data_saida, CURRENT_TIMESTAMP)
-                    ELSE NULL
+                    ELSE data_saida
                 END,
                 data_entrega = CASE
                     WHEN ? = 'Entregue'
                     THEN COALESCE(data_entrega, CURRENT_TIMESTAMP)
-                    ELSE NULL
+                    ELSE data_entrega
                 END
             WHERE id = ?
         """, (
@@ -250,20 +274,19 @@ def atualizar_entrega(
         ))
 
         if novo_status == "Aguardando":
-            status_pedido = "Em preparo"
+            novo_status_pedido = "Em preparo"
 
         elif novo_status == "Saiu para entrega":
-            status_pedido = "Saiu para entrega"
+            novo_status_pedido = "Saiu para entrega"
 
         else:
-            status_pedido = "Entregue"
+            novo_status_pedido = "Entregue"
 
         cursor.execute("""
             UPDATE pedidos
             SET status = ?
             WHERE id = ?
-              AND status != 'Cancelado'
-        """, (status_pedido, pedido_id))
+        """, (novo_status_pedido, pedido_id))
 
         conexao.commit()
 

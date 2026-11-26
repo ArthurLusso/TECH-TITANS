@@ -13,6 +13,9 @@ from data_base.entregas import (
 from data_base.pedidos import listar_itens_pedido
 
 
+FUSO_BRASILIA = timezone(timedelta(hours=-3))
+
+
 def formatar_preco(valor):
     return (
         f"R$ {valor:,.2f}"
@@ -32,11 +35,9 @@ def formatar_data_hora(valor):
         if data.tzinfo is None:
             data = data.replace(tzinfo=timezone.utc)
 
-        horario_brasilia = timezone(timedelta(hours=-3))
+        data = data.astimezone(FUSO_BRASILIA)
 
-        data_local = data.astimezone(horario_brasilia)
-
-        return data_local.strftime("%d/%m/%Y às %H:%M")
+        return data.strftime("%d/%m/%Y às %H:%M")
 
     except (ValueError, TypeError):
         return valor
@@ -143,7 +144,8 @@ else:
                 st.write(f"**Cliente:** {entrega['cliente_nome']}")
 
                 st.write(
-                    f"**Telefone:** {entrega['telefone'] or 'Não informado'}"
+                    f"**Telefone:** "
+                    f"{entrega['telefone'] or 'Não informado'}"
                 )
 
                 st.write(
@@ -166,10 +168,6 @@ else:
 
             with col2:
                 st.write(
-                    f"**Valor do pedido:** {formatar_preco(entrega['total'])}"
-                )
-
-                st.write(
                     f"**Data do pedido:** "
                     f"{formatar_data_hora(entrega['data_pedido'])}"
                 )
@@ -182,6 +180,16 @@ else:
                 st.write(
                     f"**Previsão:** "
                     f"{entrega['previsao_entrega'] or 'Não informada'}"
+                )
+
+                st.write(
+                    f"**Forma de pagamento:** "
+                    f"{entrega['forma_pagamento'] or 'Não informada'}"
+                )
+
+                st.write(
+                    f"**Situação do pagamento:** "
+                    f"{entrega['status_pagamento']}"
                 )
 
                 if entrega["data_saida"]:
@@ -198,6 +206,27 @@ else:
 
             st.divider()
 
+            st.markdown("#### Resumo financeiro")
+
+            col1, col2, col3 = st.columns(3)
+
+            col1.metric(
+                "Pratos",
+                formatar_preco(entrega["subtotal"])
+            )
+
+            col2.metric(
+                "Taxa de entrega",
+                formatar_preco(entrega["taxa_entrega"])
+            )
+
+            col3.metric(
+                "Total",
+                formatar_preco(entrega["total"])
+            )
+
+            st.divider()
+
             st.markdown("#### Pratos do pedido")
 
             try:
@@ -206,7 +235,8 @@ else:
                 if itens:
                     for item in itens:
                         st.write(
-                            f"**{item['quantidade']}x {item['produto_nome']}**"
+                            f"**{item['quantidade']}x "
+                            f"{item['produto_nome']}**"
                         )
 
                         st.caption(

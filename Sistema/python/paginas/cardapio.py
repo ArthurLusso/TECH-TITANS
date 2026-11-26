@@ -14,6 +14,14 @@ from data_base.cardapio import (
     excluir_prato
 )
 
+from data_base.receitas import (
+    listar_variacoes_estoque,
+    listar_receita,
+    salvar_item_receita,
+    remover_item_receita,
+    unidades_compativeis
+)
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PASTA_PRATOS = BASE_DIR / "assets" / "pratos"
@@ -110,32 +118,26 @@ def apagar_arquivo_imagem(caminho):
         Path(arquivo).unlink(missing_ok=True)
 
 
-def buscar_imagem(uploaded_file):
-    if uploaded_file is None:
-        return None
-
-    return salvar_imagem(uploaded_file)
-
-
 st.title("🌮 Cardápio")
-st.write("Gerencie os pratos disponíveis no restaurante.")
+st.write("Gerencie os pratos, preços e receitas do restaurante.")
 
 try:
     todos_pratos = listar_pratos()
-
-    total_pratos = len(todos_pratos)
-
-    pratos_ativos = sum(
-        1 for prato in todos_pratos
-        if prato["disponivel"] == 1
-    )
-
-    pratos_inativos = total_pratos - pratos_ativos
+    variacoes_estoque = listar_variacoes_estoque()
 
 except Exception as erro:
-    st.error(f"Erro ao carregar o cardápio: {erro}")
+    st.error(f"Erro ao carregar o cardápio ou estoque: {erro}")
     st.stop()
 
+
+total_pratos = len(todos_pratos)
+
+pratos_ativos = sum(
+    1 for prato in todos_pratos
+    if prato["disponivel"] == 1
+)
+
+pratos_inativos = total_pratos - pratos_ativos
 
 col1, col2, col3 = st.columns(3)
 
@@ -201,7 +203,7 @@ with st.expander("➕ Cadastrar novo prato", expanded=False):
                 caminho_foto = None
 
                 try:
-                    caminho_foto = buscar_imagem(foto)
+                    caminho_foto = salvar_imagem(foto)
 
                     cadastrar_prato(
                         nome,
@@ -227,6 +229,7 @@ st.subheader("Pratos cadastrados")
 
 try:
     categorias_banco = listar_categorias()
+
 except Exception as erro:
     st.error(f"Erro ao carregar categorias: {erro}")
     categorias_banco = []
@@ -278,6 +281,7 @@ if not pratos:
     st.info("Nenhum prato encontrado com os filtros selecionados.")
 
 else:
+
     st.caption(f"{len(pratos)} prato(s) encontrado(s).")
 
     for prato in pratos:
@@ -309,7 +313,6 @@ else:
 
         with col_dados:
             st.subheader(nome_prato)
-
             st.write(f"**Categoria:** {categoria_prato}")
             st.write(f"**Preço:** {formatar_preco(preco_prato)}")
             st.write(f"**Disponibilidade:** {status}")
@@ -319,189 +322,335 @@ else:
             else:
                 st.caption("Sem descrição.")
 
-            with st.expander("Gerenciar prato"):
+        with st.expander(f"Gerenciar {nome_prato}"):
 
-                st.markdown("#### ✏️ Editar informações")
+            st.markdown("#### ✏️ Editar informações")
 
-                with st.form(
-                    f"form_editar_{prato_id}",
-                    clear_on_submit=True
+            with st.form(f"form_editar_{prato_id}"):
+
+                novo_nome = st.text_input(
+                    "Nome",
+                    value=nome_prato
+                )
+
+                nova_descricao = st.text_area(
+                    "Descrição",
+                    value=descricao_prato
+                )
+
+                categorias_edicao = list(
+                    dict.fromkeys(
+                        CATEGORIAS_PADRAO
+                        + categorias_banco
+                        + [categoria_prato]
+                    )
+                )
+
+                indice_categoria = categorias_edicao.index(
+                    categoria_prato
+                )
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    nova_categoria = st.selectbox(
+                        "Categoria",
+                        categorias_edicao,
+                        index=indice_categoria
+                    )
+
+                with col2:
+                    novo_preco = st.number_input(
+                        "Preço (R$)",
+                        min_value=0.0,
+                        value=float(preco_prato),
+                        step=1.0,
+                        format="%.2f"
+                    )
+
+                nova_foto = st.file_uploader(
+                    "Trocar foto do prato",
+                    type=["jpg", "jpeg", "png", "webp"],
+                    help="Deixe vazio para manter a foto atual."
+                )
+
+                salvar_edicao = st.form_submit_button(
+                    "Salvar alterações",
+                    use_container_width=True
+                )
+
+                if salvar_edicao:
+
+                    if not novo_nome.strip():
+                        st.warning("Informe o nome do prato.")
+
+                    elif novo_preco <= 0:
+                        st.warning("Informe um preço maior que zero.")
+
+                    else:
+                        nova_imagem = None
+
+                        try:
+                            if nova_foto is not None:
+                                nova_imagem = salvar_imagem(nova_foto)
+
+                            editar_prato(
+                                prato_id,
+                                novo_nome,
+                                nova_descricao,
+                                nova_categoria,
+                                novo_preco,
+                                nova_imagem
+                            )
+
+                            if nova_imagem:
+                                apagar_arquivo_imagem(imagem_prato)
+
+                            st.success("Prato atualizado com sucesso!")
+                            st.rerun()
+
+                        except Exception as erro:
+                            if nova_imagem:
+                                apagar_arquivo_imagem(nova_imagem)
+
+                            st.error(f"Erro ao editar prato: {erro}")
+
+            st.divider()
+
+            st.markdown("#### 📷 Foto atual")
+
+            if caminho_foto:
+
+                if st.button(
+                    "Remover foto",
+                    key=f"remover_foto_{prato_id}"
                 ):
 
-                    novo_nome = st.text_input(
-                        "Nome",
-                        value=nome_prato,
-                        key=f"nome_{prato_id}"
+                    try:
+                        remover_imagem_prato(prato_id)
+                        apagar_arquivo_imagem(imagem_prato)
+
+                        st.success("Foto removida com sucesso!")
+                        st.rerun()
+
+                    except Exception as erro:
+                        st.error(f"Erro ao remover foto: {erro}")
+
+            else:
+                st.caption("Este prato ainda não possui uma foto.")
+
+            st.divider()
+
+            st.markdown("#### 🥑 Ficha técnica do prato")
+
+            st.caption(
+                "Informe os ingredientes e as quantidades necessários "
+                "para preparar uma unidade deste prato."
+            )
+
+            try:
+                receita = listar_receita(prato_id)
+
+                if receita:
+
+                    for componente in receita:
+
+                        col1, col2 = st.columns([4, 1])
+
+                        with col1:
+                            st.write(
+                                f"**{componente['ingrediente']} — "
+                                f"{componente['variacao']}**"
+                            )
+
+                            st.caption(
+                                f"Necessário: "
+                                f"{componente['quantidade_necessaria']:g} "
+                                f"{componente['unidade_receita']} por prato"
+                            )
+
+                            st.caption(
+                                f"Estoque atual: "
+                                f"{componente['estoque_atual']:g} "
+                                f"{componente['unidade_estoque']}"
+                            )
+
+                        with col2:
+                            if st.button(
+                                "Remover",
+                                key=f"remover_receita_{componente['receita_id']}"
+                            ):
+
+                                try:
+                                    remover_item_receita(
+                                        componente["receita_id"]
+                                    )
+
+                                    st.success("Ingrediente removido da receita.")
+                                    st.rerun()
+
+                                except Exception as erro:
+                                    st.error(str(erro))
+
+                else:
+                    st.info(
+                        "Este prato ainda não possui ingredientes "
+                        "associados ao estoque."
                     )
 
-                    nova_descricao = st.text_area(
-                        "Descrição",
-                        value=descricao_prato,
-                        key=f"descricao_{prato_id}"
-                    )
+                if variacoes_estoque:
 
-                    categorias_edicao = list(
-                        dict.fromkeys(
-                            CATEGORIAS_PADRAO
-                            + categorias_banco
-                            + [categoria_prato]
+                    variacoes_por_id = {
+                        variacao["id"]: variacao
+                        for variacao in variacoes_estoque
+                    }
+
+                    with st.form(f"form_receita_{prato_id}"):
+
+                        variacao_id = st.selectbox(
+                            "Ingrediente e variação do estoque",
+                            options=list(variacoes_por_id.keys()),
+                            format_func=lambda id: (
+                                f"{variacoes_por_id[id]['ingrediente']} — "
+                                f"{variacoes_por_id[id]['variacao']} "
+                                f"({variacoes_por_id[id]['quantidade']:g} "
+                                f"{variacoes_por_id[id]['unidade']} disponíveis)"
+                            )
                         )
-                    )
 
-                    indice_categoria = categorias_edicao.index(
-                        categoria_prato
-                    )
+                        variacao_selecionada = variacoes_por_id[variacao_id]
 
-                    col_edicao1, col_edicao2 = st.columns(2)
-
-                    with col_edicao1:
-                        nova_categoria = st.selectbox(
-                            "Categoria",
-                            categorias_edicao,
-                            index=indice_categoria,
-                            key=f"categoria_{prato_id}"
+                        unidades = unidades_compativeis(
+                            variacao_selecionada["unidade"]
                         )
 
-                    with col_edicao2:
-                        novo_preco = st.number_input(
-                            "Preço (R$)",
-                            min_value=0.0,
-                            value=float(preco_prato),
+                        unidade_padrao = variacao_selecionada["unidade"]
+
+                        if unidade_padrao == "kg":
+                            unidade_padrao = "g"
+
+                        elif unidade_padrao == "L":
+                            unidade_padrao = "ml"
+
+                        indice_unidade = unidades.index(
+                            unidade_padrao
+                        )
+
+                        unidade = st.selectbox(
+                            "Unidade utilizada na receita",
+                            unidades,
+                            index=indice_unidade
+                        )
+
+                        quantidade = st.number_input(
+                            "Quantidade necessária por prato",
+                            min_value=0.001,
+                            value=1.0,
                             step=1.0,
-                            format="%.2f",
-                            key=f"preco_{prato_id}"
+                            format="%.3f"
                         )
 
-                    nova_foto = st.file_uploader(
-                        "Trocar foto do prato",
-                        type=["jpg", "jpeg", "png", "webp"],
-                        help="Deixe vazio para manter a foto atual.",
-                        key=f"foto_edicao_{prato_id}"
-                    )
+                        salvar_receita = st.form_submit_button(
+                            "Adicionar ingrediente à receita",
+                            use_container_width=True
+                        )
 
-                    salvar_edicao = st.form_submit_button(
-                        "Salvar alterações",
-                        use_container_width=True
-                    )
-
-                    if salvar_edicao:
-
-                        if not novo_nome.strip():
-                            st.warning("Informe o nome do prato.")
-
-                        elif novo_preco <= 0:
-                            st.warning("Informe um preço maior que zero.")
-
-                        else:
-                            nova_imagem = None
+                        if salvar_receita:
 
                             try:
-                                if nova_foto is not None:
-                                    nova_imagem = buscar_imagem(nova_foto)
-
-                                editar_prato(
+                                salvar_item_receita(
                                     prato_id,
-                                    novo_nome,
-                                    nova_descricao,
-                                    nova_categoria,
-                                    novo_preco,
-                                    nova_imagem
+                                    variacao_id,
+                                    quantidade,
+                                    unidade
                                 )
 
-                                if nova_imagem:
-                                    apagar_arquivo_imagem(imagem_prato)
+                                st.success(
+                                    "Ingrediente adicionado à receita!"
+                                )
 
-                                st.success("Prato atualizado com sucesso!")
                                 st.rerun()
 
                             except Exception as erro:
-                                if nova_imagem:
-                                    apagar_arquivo_imagem(nova_imagem)
-
-                                st.error(f"Erro ao editar prato: {erro}")
-
-                st.divider()
-
-                st.markdown("#### 📷 Foto atual")
-
-                if caminho_foto:
-                    if st.button(
-                        "Remover foto",
-                        key=f"remover_foto_{prato_id}"
-                    ):
-                        try:
-                            remover_imagem_prato(prato_id)
-                            apagar_arquivo_imagem(imagem_prato)
-
-                            st.success("Foto removida com sucesso!")
-                            st.rerun()
-
-                        except Exception as erro:
-                            st.error(f"Erro ao remover foto: {erro}")
-
-                else:
-                    st.caption("Este prato ainda não possui uma foto.")
-
-                st.divider()
-
-                st.markdown("#### Disponibilidade")
-
-                if disponivel_prato:
-
-                    if st.button(
-                        "Desativar prato",
-                        key=f"desativar_{prato_id}",
-                        use_container_width=True
-                    ):
-                        try:
-                            alterar_disponibilidade(prato_id, False)
-
-                            st.success("Prato desativado!")
-                            st.rerun()
-
-                        except Exception as erro:
-                            st.error(f"Erro ao alterar disponibilidade: {erro}")
+                                st.error(
+                                    f"Não foi possível salvar a receita: {erro}"
+                                )
 
                 else:
 
-                    if st.button(
-                        "Ativar prato",
-                        key=f"ativar_{prato_id}",
-                        use_container_width=True
-                    ):
-                        try:
-                            alterar_disponibilidade(prato_id, True)
+                    st.warning(
+                        "Cadastre ingredientes e variações na tela Estoque "
+                        "antes de montar a ficha técnica."
+                    )
 
-                            st.success("Prato ativado!")
-                            st.rerun()
+            except Exception as erro:
+                st.error(f"Erro ao carregar a ficha técnica: {erro}")
 
-                        except Exception as erro:
-                            st.error(f"Erro ao alterar disponibilidade: {erro}")
+            st.divider()
 
-                st.divider()
+            st.markdown("#### Disponibilidade")
 
-                st.markdown("#### 🗑️ Excluir prato")
-
-                confirmar = st.checkbox(
-                    "Confirmo que desejo excluir este prato.",
-                    key=f"confirmar_exclusao_{prato_id}"
-                )
+            if disponivel_prato:
 
                 if st.button(
-                    "Excluir prato",
-                    key=f"excluir_{prato_id}",
-                    disabled=not confirmar,
+                    "Desativar prato",
+                    key=f"desativar_{prato_id}",
                     use_container_width=True
                 ):
 
                     try:
-                        excluir_prato(prato_id)
-                        apagar_arquivo_imagem(imagem_prato)
-
-                        st.success("Prato excluído com sucesso!")
+                        alterar_disponibilidade(prato_id, False)
+                        st.success("Prato desativado!")
                         st.rerun()
 
                     except Exception as erro:
-                        st.error(f"Não foi possível excluir o prato: {erro}")
+                        st.error(f"Erro ao alterar disponibilidade: {erro}")
+
+            else:
+
+                if st.button(
+                    "Ativar prato",
+                    key=f"ativar_{prato_id}",
+                    use_container_width=True
+                ):
+
+                    try:
+                        alterar_disponibilidade(prato_id, True)
+                        st.success("Prato ativado!")
+                        st.rerun()
+
+                    except Exception as erro:
+                        st.error(f"Erro ao alterar disponibilidade: {erro}")
+
+            st.divider()
+
+            st.markdown("#### 🗑️ Excluir prato")
+
+            confirmar = st.checkbox(
+                "Confirmo que desejo excluir este prato.",
+                key=f"confirmar_exclusao_{prato_id}"
+            )
+
+            if st.button(
+                "Excluir prato",
+                key=f"excluir_{prato_id}",
+                disabled=not confirmar,
+                use_container_width=True
+            ):
+
+                try:
+                    excluir_prato(prato_id)
+                    apagar_arquivo_imagem(imagem_prato)
+
+                    st.success("Prato excluído com sucesso!")
+                    st.rerun()
+
+                except Exception as erro:
+                    st.error(
+                        "Não foi possível excluir o prato. "
+                        "Verifique se ele já foi utilizado em pedidos "
+                        "ou se possui registros vinculados. "
+                        f"Detalhes: {erro}"
+                    )
 
         st.divider()

@@ -1,20 +1,17 @@
 
 import streamlit as st
 
-from pathlib import Path
-
 from data_base.pedidos import (
     STATUS_PEDIDO,
+    FORMAS_PAGAMENTO,
+    STATUS_PAGAMENTO,
     listar_produtos_disponiveis,
     cadastrar_pedido,
     listar_pedidos,
     listar_itens_pedido,
-    atualizar_status_pedido
+    atualizar_status_pedido,
+    atualizar_pagamento
 )
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-PASTA_PRATOS = (BASE_DIR / "assets" / "pratos").resolve()
 
 
 def formatar_preco(valor):
@@ -26,57 +23,46 @@ def formatar_preco(valor):
     )
 
 
-def obter_imagem(caminho):
-    if not caminho:
-        return None
-
-    arquivo = (BASE_DIR / caminho).resolve()
-
-    try:
-        arquivo.relative_to(PASTA_PRATOS)
-    except ValueError:
-        return None
-
-    if arquivo.is_file():
-        return str(arquivo)
-
-    return None
-
-
 st.title("🛒 Pedidos")
 st.write("Gerencie os pedidos realizados no TacoLoko.")
 
 try:
     todos_pedidos = listar_pedidos()
 
-    total_pedidos = len(todos_pedidos)
-
-    pendentes = sum(
-        1 for pedido in todos_pedidos
-        if pedido["status"] == "Pendente"
-    )
-
-    em_preparo = sum(
-        1 for pedido in todos_pedidos
-        if pedido["status"] == "Em preparo"
-    )
-
-    concluidos = sum(
-        1 for pedido in todos_pedidos
-        if pedido["status"] == "Entregue"
-    )
-
 except Exception as erro:
     st.error(f"Erro ao carregar os pedidos: {erro}")
     st.stop()
+
+
+total_pedidos = len(todos_pedidos)
+
+pendentes = sum(
+    1 for pedido in todos_pedidos
+    if pedido["status"] in ("Pendente", "Agendado")
+)
+
+em_preparo = sum(
+    1 for pedido in todos_pedidos
+    if pedido["status"] == "Em preparo"
+)
+
+em_entrega = sum(
+    1 for pedido in todos_pedidos
+    if pedido["status"] == "Saiu para entrega"
+)
+
+entregues = sum(
+    1 for pedido in todos_pedidos
+    if pedido["status"] == "Entregue"
+)
 
 
 col1, col2, col3, col4 = st.columns(4)
 
 col1.metric("Total de pedidos", total_pedidos)
 col2.metric("Pendentes", pendentes)
-col3.metric("Em preparo", em_preparo)
-col4.metric("Concluídos", concluidos)
+col3.metric("Em andamento", em_preparo + em_entrega)
+col4.metric("Entregues", entregues)
 
 st.divider()
 
@@ -98,6 +84,7 @@ with aba_novo:
         produtos = []
 
     if not produtos:
+
         st.warning(
             "Não existem pratos disponíveis no cardápio. "
             "Cadastre ou ative um prato antes de criar um pedido."
@@ -117,10 +104,23 @@ with aba_novo:
                 col_foto, col_info = st.columns([1, 4])
 
                 with col_foto:
-                    caminho_imagem = obter_imagem(produto["imagem"])
+                    if produto["imagem"]:
+                        from pathlib import Path
 
-                    if caminho_imagem:
-                        st.image(caminho_imagem, width=110)
+                        base_dir = Path(__file__).resolve().parent.parent
+                        caminho = (base_dir / produto["imagem"]).resolve()
+                        pasta = (base_dir / "assets" / "pratos").resolve()
+
+                        try:
+                            caminho.relative_to(pasta)
+                            imagem_valida = caminho.is_file()
+                        except ValueError:
+                            imagem_valida = False
+
+                        if imagem_valida:
+                            st.image(str(caminho), width=110)
+                        else:
+                            st.markdown("🌮")
                     else:
                         st.markdown("🌮")
 
@@ -134,7 +134,7 @@ with aba_novo:
 
                 st.divider()
 
-        st.subheader("Produtos do pedido")
+        st.subheader("Pratos do pedido")
 
         produtos_selecionados = st.multiselect(
             "Selecione os pratos desejados",
@@ -147,7 +147,7 @@ with aba_novo:
         )
 
         itens_pedido = []
-        total_pedido = 0
+        subtotal_pedido = 0
 
         if produtos_selecionados:
 
@@ -158,10 +158,23 @@ with aba_novo:
                 col_foto, col_info, col_quantidade = st.columns([1, 3, 1])
 
                 with col_foto:
-                    caminho_imagem = obter_imagem(produto["imagem"])
+                    if produto["imagem"]:
+                        from pathlib import Path
 
-                    if caminho_imagem:
-                        st.image(caminho_imagem, width=100)
+                        base_dir = Path(__file__).resolve().parent.parent
+                        caminho = (base_dir / produto["imagem"]).resolve()
+                        pasta = (base_dir / "assets" / "pratos").resolve()
+
+                        try:
+                            caminho.relative_to(pasta)
+                            imagem_valida = caminho.is_file()
+                        except ValueError:
+                            imagem_valida = False
+
+                        if imagem_valida:
+                            st.image(str(caminho), width=100)
+                        else:
+                            st.markdown("🌮")
                     else:
                         st.markdown("🌮")
 
@@ -180,13 +193,12 @@ with aba_novo:
                     )
 
                 subtotal = float(produto["preco"]) * quantidade
+                subtotal_pedido += subtotal
 
                 itens_pedido.append({
                     "produto_id": produto_id,
                     "quantidade": quantidade
                 })
-
-                total_pedido += subtotal
 
                 st.caption(
                     f"Subtotal: {formatar_preco(subtotal)}"
@@ -248,10 +260,53 @@ with aba_novo:
 
         st.divider()
 
+        st.subheader("Entrega e pagamento")
+
+        taxa_entrega = st.number_input(
+            "Taxa de entrega (R$)",
+            min_value=0.0,
+            value=0.0,
+            step=1.0,
+            format="%.2f"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            forma_pagamento = st.selectbox(
+                "Forma de pagamento",
+                FORMAS_PAGAMENTO
+            )
+
+        with col2:
+            status_pagamento = st.selectbox(
+                "Situação do pagamento",
+                STATUS_PAGAMENTO
+            )
+
+        total_pedido = round(
+            subtotal_pedido + taxa_entrega,
+            2
+        )
+
+        st.divider()
+
         st.subheader("Resumo do pedido")
 
-        st.metric(
-            "Valor total",
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Subtotal dos pratos",
+            formatar_preco(subtotal_pedido)
+        )
+
+        col2.metric(
+            "Taxa de entrega",
+            formatar_preco(taxa_entrega)
+        )
+
+        col3.metric(
+            "Total do pedido",
             formatar_preco(total_pedido)
         )
 
@@ -279,15 +334,22 @@ with aba_novo:
                         bairro,
                         cidade,
                         complemento,
-                        itens_pedido
+                        itens_pedido,
+                        taxa_entrega,
+                        forma_pagamento,
+                        status_pagamento
                     )
 
                     st.success(
                         f"Pedido nº {pedido_id} cadastrado com sucesso!"
                     )
 
+                    st.rerun()
+
                 except Exception as erro:
-                    st.error(f"Não foi possível registrar o pedido: {erro}")
+                    st.error(
+                        f"Não foi possível registrar o pedido: {erro}"
+                    )
 
 
 with aba_consulta:
@@ -339,7 +401,9 @@ with aba_consulta:
             ):
 
                 st.write(f"**Cliente:** {pedido['cliente_nome']}")
-                st.write(f"**Telefone:** {pedido['telefone'] or 'Não informado'}")
+                st.write(
+                    f"**Telefone:** {pedido['telefone'] or 'Não informado'}"
+                )
 
                 st.write(
                     f"**Endereço:** {pedido['rua']}, "
@@ -353,7 +417,6 @@ with aba_consulta:
                     )
 
                 st.write(f"**Data do pedido:** {pedido['data_pedido']}")
-                st.write(f"**Status:** {status_atual}")
 
                 st.divider()
 
@@ -362,65 +425,151 @@ with aba_consulta:
                 itens = listar_itens_pedido(pedido_id)
 
                 for item in itens:
-
                     st.write(
                         f"**{item['quantidade']}x {item['produto_nome']}**"
                     )
 
                     st.caption(
-                        f"{formatar_preco(item['preco_unitario'])} "
-                        f"cada | Subtotal: "
-                        f"{formatar_preco(item['subtotal'])}"
+                        f"{formatar_preco(item['preco_unitario'])} cada | "
+                        f"Subtotal: {formatar_preco(item['subtotal'])}"
                     )
 
                 st.divider()
 
-                st.markdown("#### Total do pedido")
+                col1, col2, col3 = st.columns(3)
 
-                st.subheader(formatar_preco(pedido["total"]))
+                col1.metric(
+                    "Pratos",
+                    formatar_preco(pedido["subtotal"])
+                )
 
-                if status_atual == "Cancelado":
+                col2.metric(
+                    "Entrega",
+                    formatar_preco(pedido["taxa_entrega"])
+                )
 
-                    st.warning(
-                        "Este pedido foi cancelado. "
-                        "Consulte a aba Cancelamentos para mais informações."
+                col3.metric(
+                    "Total",
+                    formatar_preco(pedido["total"])
+                )
+
+                st.divider()
+
+                st.markdown("#### Pagamento")
+
+                st.write(
+                    f"**Forma:** {pedido['forma_pagamento'] or 'Não informada'}"
+                )
+
+                st.write(
+                    f"**Situação:** {pedido['status_pagamento']}"
+                )
+
+                if pedido["data_pagamento"]:
+                    st.write(
+                        f"**Data do pagamento:** {pedido['data_pagamento']}"
                     )
 
-                else:
+                if status_atual != "Cancelado":
 
-                    opcoes_status = STATUS_PEDIDO.copy()
+                    with st.form(f"form_pagamento_{pedido_id}"):
 
-                    if status_atual not in opcoes_status:
-                        opcoes_status.insert(0, status_atual)
+                        indice_forma = (
+                            FORMAS_PAGAMENTO.index(pedido["forma_pagamento"])
+                            if pedido["forma_pagamento"] in FORMAS_PAGAMENTO
+                            else 0
+                        )
 
-                    indice_status = opcoes_status.index(status_atual)
+                        indice_pagamento = (
+                            STATUS_PAGAMENTO.index(pedido["status_pagamento"])
+                            if pedido["status_pagamento"] in STATUS_PAGAMENTO
+                            else 0
+                        )
 
-                    novo_status = st.selectbox(
-                        "Atualizar status",
-                        opcoes_status,
-                        index=indice_status,
-                        key=f"status_pedido_{pedido_id}"
-                    )
+                        nova_forma = st.selectbox(
+                            "Forma de pagamento",
+                            FORMAS_PAGAMENTO,
+                            index=indice_forma
+                        )
 
-                    if st.button(
-                        "Salvar status",
-                        key=f"salvar_status_{pedido_id}",
-                        use_container_width=True
-                    ):
+                        novo_pagamento = st.selectbox(
+                            "Situação do pagamento",
+                            STATUS_PAGAMENTO,
+                            index=indice_pagamento
+                        )
 
-                        if novo_status == status_atual:
-                            st.info("O pedido já possui esse status.")
+                        salvar_pagamento = st.form_submit_button(
+                            "Atualizar pagamento",
+                            use_container_width=True
+                        )
 
-                        else:
+                        if salvar_pagamento:
 
                             try:
-                                atualizar_status_pedido(
+                                atualizar_pagamento(
                                     pedido_id,
-                                    novo_status
+                                    nova_forma,
+                                    novo_pagamento
                                 )
 
-                                st.success("Status atualizado com sucesso!")
+                                st.success("Pagamento atualizado!")
                                 st.rerun()
 
                             except Exception as erro:
-                                st.error(f"Erro ao atualizar status: {erro}")
+                                st.error(
+                                    f"Erro ao atualizar o pagamento: {erro}"
+                                )
+
+                st.divider()
+
+                st.markdown("#### Andamento do pedido")
+
+                proximas_etapas = {
+                    "Pendente": "Em preparo",
+                    "Agendado": "Em preparo",
+                    "Em preparo": "Saiu para entrega",
+                    "Saiu para entrega": "Entregue"
+                }
+
+                proximo_status = proximas_etapas.get(status_atual)
+
+                if status_atual == "Cancelado":
+
+                    st.warning("Este pedido foi cancelado.")
+
+                elif status_atual == "Entregue":
+
+                    st.success("Este pedido já foi entregue.")
+
+                elif proximo_status:
+
+                    if st.button(
+                        f"Avançar para: {proximo_status}",
+                        key=f"avancar_{pedido_id}",
+                        type="primary",
+                        use_container_width=True
+                    ):
+
+                        try:
+                            atualizar_status_pedido(
+                                pedido_id,
+                                proximo_status
+                            )
+
+                            st.success(
+                                f"Pedido atualizado para {proximo_status}!"
+                            )
+
+                            st.rerun()
+
+                        except Exception as erro:
+                            st.error(
+                                f"Não foi possível avançar o pedido: {erro}"
+                            )
+
+                    if proximo_status == "Em preparo":
+                        st.caption(
+                            "Ao iniciar o preparo, o sistema verificará a "
+                            "ficha técnica de cada prato e descontará os "
+                            "ingredientes utilizados no estoque."
+                        )

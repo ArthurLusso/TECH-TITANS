@@ -17,14 +17,21 @@ def listar_pedidos_cancelaveis():
 
         cursor.execute("""
             SELECT
-                id,
-                cliente_nome,
-                total,
-                status,
-                data_pedido
-            FROM pedidos
-            WHERE status NOT IN ('Cancelado', 'Entregue')
-            ORDER BY id DESC
+                p.id,
+                p.cliente_nome,
+                p.total,
+                p.status,
+                p.data_pedido,
+                p.status_pagamento,
+                p.forma_pagamento,
+                EXISTS (
+                    SELECT 1
+                    FROM baixas_estoque_pedido b
+                    WHERE b.pedido_id = p.id
+                ) AS estoque_descontado
+            FROM pedidos p
+            WHERE p.status NOT IN ('Cancelado', 'Entregue')
+            ORDER BY p.id DESC
         """)
 
         return cursor.fetchall()
@@ -58,7 +65,7 @@ def registrar_cancelamento(
         cursor = conexao.cursor()
 
         cursor.execute("""
-            SELECT total, status
+            SELECT total, status, status_pagamento
             FROM pedidos
             WHERE id = ?
         """, (pedido_id,))
@@ -69,19 +76,32 @@ def registrar_cancelamento(
             raise ValueError("Pedido não encontrado.")
 
         if pedido["status"] in ("Cancelado", "Entregue"):
-            raise ValueError(
-                "Este pedido não pode ser cancelado."
-            )
+            raise ValueError("Este pedido não pode ser cancelado.")
 
         total_pedido = float(pedido["total"])
-
-        if status_reembolso == "Não reembolsado":
-            valor_reembolso = 0
 
         if valor_reembolso > total_pedido:
             raise ValueError(
                 "O valor do reembolso não pode ser maior que o pedido."
             )
+
+        if status_reembolso == "Não reembolsado":
+            valor_reembolso = 0
+
+        if status_reembolso == "Reembolsado":
+            if pedido["status_pagamento"] not in (
+                "Pago",
+                "Reembolso parcial"
+            ):
+                raise ValueError(
+                    "Não é possível registrar um reembolso sem que "
+                    "o pagamento tenha sido marcado como Pago."
+                )
+
+            if valor_reembolso <= 0:
+                raise ValueError(
+                    "Informe um valor maior que zero para o reembolso."
+                )
 
         valor_reembolso = round(valor_reembolso, 2)
         valor_prejuizo = round(total_pedido - valor_reembolso, 2)
@@ -108,6 +128,18 @@ def registrar_cancelamento(
             SET status = 'Cancelado'
             WHERE id = ?
         """, (pedido_id,))
+
+        if status_reembolso == "Reembolsado":
+            if valor_reembolso >= total_pedido:
+                novo_status_pagamento = "Reembolsado"
+            else:
+                novo_status_pagamento = "Reembolso parcial"
+
+            cursor.execute("""
+                UPDATE pedidos
+                SET status_pagamento = ?
+                WHERE id = ?
+            """, (novo_status_pagamento, pedido_id))
 
         conexao.commit()
 
@@ -139,7 +171,9 @@ def listar_cancelamentos(busca="", status_reembolso=None):
                 p.cliente_nome,
                 p.telefone,
                 p.total AS total_pedido,
-                p.data_pedido
+                p.data_pedido,
+                p.forma_pagamento,
+                p.status_pagamento
             FROM cancelamentos c
             INNER JOIN pedidos p
                 ON p.id = c.pedido_id
@@ -202,7 +236,8 @@ def atualizar_reembolso(
         cursor.execute("""
             SELECT
                 c.pedido_id,
-                p.total
+                p.total,
+                p.status_pagamento
             FROM cancelamentos c
             INNER JOIN pedidos p
                 ON p.id = c.pedido_id
@@ -214,15 +249,33 @@ def atualizar_reembolso(
         if cancelamento is None:
             raise ValueError("Cancelamento não encontrado.")
 
+        pedido_id = cancelamento["pedido_id"]
         total_pedido = float(cancelamento["total"])
-
-        if status_reembolso == "Não reembolsado":
-            valor_reembolso = 0
+        pagamento_atual = cancelamento["status_pagamento"]
 
         if valor_reembolso > total_pedido:
             raise ValueError(
                 "O valor do reembolso não pode ser maior que o pedido."
             )
+
+        if status_reembolso == "Não reembolsado":
+            valor_reembolso = 0
+
+        if status_reembolso == "Reembolsado":
+
+            if pagamento_atual not in (
+                "Pago",
+                "Reembolso parcial",
+                "Reembolsado"
+            ):
+                raise ValueError(
+                    "Este pedido ainda não está marcado como pago."
+                )
+
+            if valor_reembolso <= 0:
+                raise ValueError(
+                    "Informe um valor maior que zero para o reembolso."
+                )
 
         valor_reembolso = round(valor_reembolso, 2)
         valor_prejuizo = round(total_pedido - valor_reembolso, 2)
@@ -239,6 +292,29 @@ def atualizar_reembolso(
             valor_prejuizo,
             cancelamento_id
         ))
+
+        if status_reembolso == "Reembolsado":
+
+            if valor_reembolso >= total_pedido:
+                novo_status_pagamento = "Reembolsado"
+            else:
+                novo_status_pagamento = "Reembolso parcial"
+
+            cursor.execute("""
+                UPDATE pedidos
+                SET status_pagamento = ?
+                WHERE id = ?
+            """, (novo_status_pagamento, pedido_id))
+
+        elif pagamento_atual in (
+            "Reembolsado",
+            "Reembolso parcial"
+        ):
+            cursor.execute("""
+                UPDATE pedidos
+                SET status_pagamento = 'Pago'
+                WHERE id = ?
+            """, (pedido_id,))
 
         conexao.commit()
 

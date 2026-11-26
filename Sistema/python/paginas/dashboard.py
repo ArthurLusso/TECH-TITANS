@@ -62,12 +62,16 @@ def carregar_dados():
                     END
                 ) AS andamento,
                 SUM(
-                    CASE WHEN status = 'Entregue'
-                    THEN 1 ELSE 0 END
+                    CASE
+                        WHEN status = 'Entregue'
+                        THEN 1 ELSE 0
+                    END
                 ) AS entregues,
                 SUM(
-                    CASE WHEN status = 'Cancelado'
-                    THEN 1 ELSE 0 END
+                    CASE
+                        WHEN status = 'Cancelado'
+                        THEN 1 ELSE 0
+                    END
                 ) AS cancelados
             FROM pedidos
         """)
@@ -76,58 +80,108 @@ def carregar_dados():
 
         cursor.execute("""
             SELECT
-                COUNT(*) AS quantidade,
-                COALESCE(SUM(
-                    CASE
-                        WHEN status = 'Entregue'
-                        THEN total ELSE 0
-                    END
-                ), 0) AS faturamento
-            FROM pedidos
-            WHERE date(data_pedido, '-3 hours') = ?
-        """, (hoje.isoformat(),))
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN p.status_pagamento IN (
+                                'Pago',
+                                'Reembolso parcial'
+                            )
+                            THEN MAX(
+                                p.total -
+                                CASE
+                                    WHEN c.status_reembolso = 'Reembolsado'
+                                    THEN c.valor_reembolso
+                                    ELSE 0
+                                END,
+                                0
+                            )
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS recebido,
 
-        dados_hoje = cursor.fetchone()
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN p.status_pagamento = 'Pendente'
+                                AND p.status != 'Cancelado'
+                            THEN p.total
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS pendente,
 
-        cursor.execute("""
-            SELECT COALESCE(SUM(total), 0)
-            FROM pedidos
-            WHERE status = 'Entregue'
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN p.status_pagamento IN (
+                                'Pago',
+                                'Reembolso parcial'
+                            )
+                            THEN p.taxa_entrega
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS taxas_entrega
+
+            FROM pedidos p
+            LEFT JOIN cancelamentos c
+                ON c.pedido_id = p.id
         """)
 
-        faturamento_total = cursor.fetchone()[0] or 0
+        financeiro = cursor.fetchone()
 
         cursor.execute("""
             SELECT
-                status,
-                COUNT(*) AS quantidade
-            FROM pedidos
-            GROUP BY status
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN p.status_pagamento IN (
+                                'Pago',
+                                'Reembolso parcial'
+                            )
+                            THEN MAX(
+                                p.total -
+                                CASE
+                                    WHEN c.status_reembolso = 'Reembolsado'
+                                    THEN c.valor_reembolso
+                                    ELSE 0
+                                END,
+                                0
+                            )
+                            ELSE 0
+                        END
+                    ),
+                    0
+                )
+            FROM pedidos p
+            LEFT JOIN cancelamentos c
+                ON c.pedido_id = p.id
+            WHERE date(
+                COALESCE(p.data_pagamento, p.data_pedido),
+                '-3 hours'
+            ) = ?
+        """, (hoje.isoformat(),))
+
+        recebido_hoje = cursor.fetchone()[0] or 0
+
+        cursor.execute("""
+            SELECT
+                COALESCE(SUM(
+                    CASE
+                        WHEN status_reembolso != 'Pendente'
+                        THEN valor_prejuizo
+                        ELSE 0
+                    END
+                ), 0)
+            FROM cancelamentos
         """)
 
-        resultados_status = cursor.fetchall()
-
-        quantidade_status = {
-            linha["status"]: linha["quantidade"]
-            for linha in resultados_status
-        }
-
-        status_conhecidos = [
-            "Pendente",
-            "Agendado",
-            "Em preparo",
-            "Saiu para entrega",
-            "Entregue",
-            "Cancelado"
-        ]
-
-        dados_status = [
-            {
-                "Status": status,
-                "Quantidade": quantidade_status.get(status, 0)
-            }
-            for status in status_conhecidos
-        ]
+        valores_nao_reembolsados = cursor.fetchone()[0] or 0
 
         cursor.execute("""
             SELECT
@@ -166,6 +220,38 @@ def carregar_dados():
                 for data in datas_periodo
             ]
         )
+
+        cursor.execute("""
+            SELECT
+                status,
+                COUNT(*) AS quantidade
+            FROM pedidos
+            GROUP BY status
+        """)
+
+        resultados_status = cursor.fetchall()
+
+        quantidade_status = {
+            linha["status"]: linha["quantidade"]
+            for linha in resultados_status
+        }
+
+        status_conhecidos = [
+            "Pendente",
+            "Agendado",
+            "Em preparo",
+            "Saiu para entrega",
+            "Entregue",
+            "Cancelado"
+        ]
+
+        dados_status = [
+            {
+                "Status": status,
+                "Quantidade": quantidade_status.get(status, 0)
+            }
+            for status in status_conhecidos
+        ]
 
         cursor.execute("""
             SELECT
@@ -225,6 +311,7 @@ def carregar_dados():
                 cliente_nome,
                 total,
                 status,
+                status_pagamento,
                 data_pedido
             FROM pedidos
             ORDER BY id DESC
@@ -236,7 +323,8 @@ def carregar_dados():
                 "Pedido": f"#{linha['id']}",
                 "Cliente": linha["cliente_nome"],
                 "Valor": formatar_preco(linha["total"]),
-                "Status": linha["status"],
+                "Status do pedido": linha["status"],
+                "Pagamento": linha["status_pagamento"],
                 "Data": formatar_data_hora(linha["data_pedido"])
             }
             for linha in cursor.fetchall()
@@ -245,7 +333,10 @@ def carregar_dados():
         cursor.execute("""
             SELECT
                 COUNT(*) AS total,
-                SUM(CASE WHEN disponivel = 1 THEN 1 ELSE 0 END) AS ativos
+                SUM(
+                    CASE WHEN disponivel = 1
+                    THEN 1 ELSE 0 END
+                ) AS ativos
             FROM produtos
         """)
 
@@ -253,10 +344,11 @@ def carregar_dados():
 
         return {
             "resumo": resumo,
-            "dados_hoje": dados_hoje,
-            "faturamento_total": faturamento_total,
-            "dados_status": dados_status,
+            "financeiro": financeiro,
+            "recebido_hoje": recebido_hoje,
+            "valores_nao_reembolsados": valores_nao_reembolsados,
             "dados_diarios": dados_diarios,
+            "dados_status": dados_status,
             "produtos_populares": produtos_populares,
             "estoque_baixo": estoque_baixo,
             "pedidos_recentes": pedidos_recentes,
@@ -267,12 +359,6 @@ def carregar_dados():
         conexao.close()
 
 
-st.set_page_config(
-    page_title="TacoLoko - Dashboard",
-    page_icon="🌮",
-    layout="wide"
-)
-
 st.title("🌮 Visão geral")
 st.caption(
     "Acompanhe os principais indicadores e a operação do restaurante."
@@ -282,6 +368,7 @@ col_atualizacao, col_atualizar = st.columns([5, 1])
 
 with col_atualizacao:
     agora = datetime.now(FUSO_BRASILIA)
+
     st.caption(
         f"Última atualização: {agora.strftime('%d/%m/%Y às %H:%M')}"
     )
@@ -292,6 +379,7 @@ with col_atualizar:
 
 st.divider()
 
+
 try:
     dados = carregar_dados()
 
@@ -301,7 +389,7 @@ except Exception as erro:
 
 
 resumo = dados["resumo"]
-dados_hoje = dados["dados_hoje"]
+financeiro = dados["financeiro"]
 cardapio = dados["resumo_cardapio"]
 
 total_pedidos = resumo["total"] or 0
@@ -309,8 +397,9 @@ pedidos_andamento = resumo["andamento"] or 0
 pedidos_entregues = resumo["entregues"] or 0
 pedidos_cancelados = resumo["cancelados"] or 0
 
-pedidos_hoje = dados_hoje["quantidade"] or 0
-faturamento_hoje = dados_hoje["faturamento"] or 0
+total_recebido = financeiro["recebido"] or 0
+pagamentos_pendentes = financeiro["pendente"] or 0
+taxas_entrega = financeiro["taxas_entrega"] or 0
 
 total_pratos = cardapio["total"] or 0
 pratos_ativos = cardapio["ativos"] or 0
@@ -320,54 +409,53 @@ st.subheader("Indicadores gerais")
 
 col1, col2, col3, col4 = st.columns(4)
 
-col1.metric(
-    "Total de pedidos",
-    total_pedidos,
-    help="Quantidade de pedidos registrados no sistema."
-)
-
-col2.metric(
-    "Em andamento",
-    pedidos_andamento,
-    help="Pedidos pendentes, em preparo ou em rota."
-)
-
-col3.metric(
-    "Entregues",
-    pedidos_entregues,
-    help="Quantidade de pedidos concluídos."
-)
-
-col4.metric(
-    "Cancelados",
-    pedidos_cancelados,
-    help="Quantidade total de pedidos cancelados."
-)
-
+col1.metric("Total de pedidos", total_pedidos)
+col2.metric("Em andamento", pedidos_andamento)
+col3.metric("Entregues", pedidos_entregues)
+col4.metric("Cancelados", pedidos_cancelados)
 
 st.divider()
 
-st.subheader("Resumo do dia")
+st.subheader("Resumo financeiro")
 
 col1, col2, col3 = st.columns(3)
 
 col1.metric(
-    "Pedidos recebidos hoje",
-    pedidos_hoje
+    "Total recebido",
+    formatar_preco(total_recebido)
 )
 
 col2.metric(
-    "Faturamento entregue hoje",
-    formatar_preco(faturamento_hoje),
-    help="Soma dos pedidos marcados como entregues hoje."
+    "Recebimentos hoje",
+    formatar_preco(dados["recebido_hoje"])
+)
+
+col3.metric(
+    "Pagamentos pendentes",
+    formatar_preco(pagamentos_pendentes)
+)
+
+st.caption(
+    "Os valores recebidos consideram pagamentos marcados como pagos, "
+    "descontando os reembolsos efetivamente registrados."
+)
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric(
+    "Taxas de entrega em pedidos pagos",
+    formatar_preco(taxas_entrega)
+)
+
+col2.metric(
+    "Valores não reembolsados",
+    formatar_preco(dados["valores_nao_reembolsados"])
 )
 
 col3.metric(
     "Pratos disponíveis",
-    f"{pratos_ativos} / {total_pratos}",
-    help="Quantidade de pratos ativos em relação ao total cadastrado."
+    f"{pratos_ativos} / {total_pratos}"
 )
-
 
 st.divider()
 
@@ -386,63 +474,32 @@ with col1:
 with col2:
     st.markdown("##### Distribuição por status")
 
-    dados_grafico_status = pd.DataFrame(
+    grafico_status = pd.DataFrame(
         dados["dados_status"]
     ).set_index("Status")
 
     st.bar_chart(
-        dados_grafico_status,
+        grafico_status,
         use_container_width=True
     )
 
-
 st.divider()
 
-col1, col2 = st.columns(2)
+st.subheader("Pratos mais pedidos")
 
-with col1:
-    st.subheader("Pratos mais pedidos")
+if dados["produtos_populares"]:
 
-    if dados["produtos_populares"]:
+    grafico_produtos = pd.DataFrame(
+        dados["produtos_populares"]
+    ).set_index("Prato")
 
-        grafico_produtos = pd.DataFrame(
-            dados["produtos_populares"]
-        ).set_index("Prato")
-
-        st.bar_chart(
-            grafico_produtos,
-            use_container_width=True
-        )
-
-    else:
-        st.info("Ainda não existem pedidos com pratos registrados.")
-
-
-with col2:
-    st.subheader("Resumo financeiro")
-
-    st.metric(
-        "Total de pedidos entregues",
-        formatar_preco(dados["faturamento_total"])
+    st.bar_chart(
+        grafico_produtos,
+        use_container_width=True
     )
 
-    st.caption(
-        "Valor acumulado dos pedidos com status Entregue. "
-        "Não representa necessariamente valores já recebidos."
-    )
-
-    st.metric(
-        "Prejuízo com cancelamentos",
-        formatar_preco(
-            sum(
-                float(item["valor_prejuizo"])
-                for item in __import__(
-                    "data_base.cancelamentos",
-                    fromlist=["listar_cancelamentos"]
-                ).listar_cancelamentos()
-            )
-        )
-    )
+else:
+    st.info("Ainda não existem pedidos com pratos registrados.")
 
 st.divider()
 
@@ -465,7 +522,6 @@ else:
     st.success(
         "Nenhuma variação está abaixo do estoque mínimo configurado."
     )
-
 
 st.divider()
 

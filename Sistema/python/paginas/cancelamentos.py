@@ -14,6 +14,9 @@ from data_base.cancelamentos import (
 from data_base.pedidos import listar_itens_pedido
 
 
+FUSO_BRASILIA = timezone(timedelta(hours=-3))
+
+
 def formatar_preco(valor):
     return (
         f"R$ {valor:,.2f}"
@@ -33,10 +36,9 @@ def formatar_data_hora(valor):
         if data.tzinfo is None:
             data = data.replace(tzinfo=timezone.utc)
 
-        horario_brasilia = timezone(timedelta(hours=-3))
-        data_local = data.astimezone(horario_brasilia)
+        data = data.astimezone(FUSO_BRASILIA)
 
-        return data_local.strftime("%d/%m/%Y às %H:%M")
+        return data.strftime("%d/%m/%Y às %H:%M")
 
     except (ValueError, TypeError):
         return valor
@@ -57,18 +59,20 @@ except Exception as erro:
 total_cancelamentos = len(todos_cancelamentos)
 
 reembolsos_pendentes = sum(
-    1 for cancelamento in todos_cancelamentos
-    if cancelamento["status_reembolso"] == "Pendente"
+    1 for item in todos_cancelamentos
+    if item["status_reembolso"] == "Pendente"
 )
 
 valor_reembolsos = sum(
-    float(cancelamento["valor_reembolso"])
-    for cancelamento in todos_cancelamentos
+    float(item["valor_reembolso"])
+    for item in todos_cancelamentos
+    if item["status_reembolso"] == "Reembolsado"
 )
 
-valor_prejuizos = sum(
-    float(cancelamento["valor_prejuizo"])
-    for cancelamento in todos_cancelamentos
+valor_nao_reembolsado = sum(
+    float(item["valor_prejuizo"])
+    for item in todos_cancelamentos
+    if item["status_reembolso"] != "Pendente"
 )
 
 
@@ -76,12 +80,14 @@ col1, col2, col3, col4 = st.columns(4)
 
 col1.metric("Total de cancelamentos", total_cancelamentos)
 col2.metric("Reembolsos pendentes", reembolsos_pendentes)
-col3.metric("Valores de reembolso", formatar_preco(valor_reembolsos))
-col4.metric("Prejuízo registrado", formatar_preco(valor_prejuizos))
+col3.metric("Valores reembolsados", formatar_preco(valor_reembolsos))
+col4.metric(
+    "Valores não reembolsados",
+    formatar_preco(valor_nao_reembolsado)
+)
 
 
 st.divider()
-
 
 aba_novo, aba_historico = st.tabs([
     "➕ Novo cancelamento",
@@ -143,6 +149,22 @@ with aba_novo:
 
         st.write(f"**Status atual:** {pedido['status']}")
 
+        st.write(
+            f"**Forma de pagamento:** "
+            f"{pedido['forma_pagamento'] or 'Não informada'}"
+        )
+
+        st.write(
+            f"**Situação do pagamento:** "
+            f"{pedido['status_pagamento']}"
+        )
+
+        if pedido["estoque_descontado"]:
+            st.warning(
+                "Os ingredientes deste pedido já foram descontados do estoque. "
+                "O cancelamento não devolve automaticamente esses ingredientes."
+            )
+
         try:
             itens = listar_itens_pedido(pedido_id)
 
@@ -172,8 +194,7 @@ with aba_novo:
 
             status_reembolso = st.selectbox(
                 "Status do reembolso",
-                STATUS_REEMBOLSO,
-                index=0
+                STATUS_REEMBOLSO
             )
 
             valor_reembolso = st.number_input(
@@ -197,13 +218,8 @@ with aba_novo:
             )
 
             st.write(
-                f"**Prejuízo estimado:** "
+                f"**Valor não reembolsado:** "
                 f"{formatar_preco(prejuizo_estimado)}"
-            )
-
-            st.caption(
-                "O prejuízo corresponde à diferença entre o valor do pedido "
-                "e o valor do reembolso."
             )
 
             confirmar = st.form_submit_button(
@@ -310,10 +326,20 @@ with aba_historico:
                         f"**Motivo:** {cancelamento['motivo']}"
                     )
 
+                    st.write(
+                        f"**Forma de pagamento:** "
+                        f"{cancelamento['forma_pagamento'] or 'Não informada'}"
+                    )
+
                 with col2:
                     st.write(
                         f"**Valor do pedido:** "
                         f"{formatar_preco(cancelamento['total_pedido'])}"
+                    )
+
+                    st.write(
+                        f"**Situação do pagamento:** "
+                        f"{cancelamento['status_pagamento']}"
                     )
 
                     st.write(
@@ -322,12 +348,12 @@ with aba_historico:
                     )
 
                     st.write(
-                        f"**Valor do reembolso:** "
+                        f"**Valor reembolsado:** "
                         f"{formatar_preco(cancelamento['valor_reembolso'])}"
                     )
 
                     st.write(
-                        f"**Prejuízo:** "
+                        f"**Valor não reembolsado:** "
                         f"{formatar_preco(cancelamento['valor_prejuizo'])}"
                     )
 
