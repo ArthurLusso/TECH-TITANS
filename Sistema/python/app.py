@@ -1,14 +1,18 @@
-
 import streamlit as st
 
-# Configurações da página
+from componentes.estilo import aplicar_estilo
+
+
 st.set_page_config(
     page_title="TacoLoko - Gestão",
     page_icon="🌮",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Configuração das páginas
+aplicar_estilo()
+
+
 paginas = [
     st.Page(
         "paginas/dashboard.py",
@@ -48,8 +52,10 @@ paginas = [
     )
 ]
 
-# Criação da navegação
-pagina = st.navigation(paginas, position="sidebar")
 
-# Execução da página selecionada
+pagina = st.navigation(
+    paginas,
+    position="sidebar"
+)
+
 pagina.run()

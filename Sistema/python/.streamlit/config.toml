@@ -1,0 +1,36 @@
+
+[theme]
+base = "light"
+primaryColor = "#8F302B"
+backgroundColor = "#F5F2EA"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#29352F"
+font = "sans serif"
+
+chartCategoricalColors = [
+    "#8F302B",
+    "#780000",
+    "#315D49",
+    "#C49A4A",
+    "#8C6A57",
+    "#758675"
+]
+
+chartSequentialColors = [
+    "#F5E9E7",
+    "#ECD4D1",
+    "#E2BFBB",
+    "#D9A9A5",
+    "#CF9490",
+    "#C47E7A",
+    "#B86662",
+    "#A94F4A",
+    "#8F302B",
+    "#780000"
+]
+
+[theme.sidebar]
+primaryColor = "#F5F2EA"
+backgroundColor = "#8F302B"
+secondaryBackgroundColor = "#782823"
+textColor = "#FFF8F0"

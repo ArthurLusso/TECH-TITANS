@@ -62,16 +62,12 @@ def carregar_dados():
                     END
                 ) AS andamento,
                 SUM(
-                    CASE
-                        WHEN status = 'Entregue'
-                        THEN 1 ELSE 0
-                    END
+                    CASE WHEN status = 'Entregue'
+                    THEN 1 ELSE 0 END
                 ) AS entregues,
                 SUM(
-                    CASE
-                        WHEN status = 'Cancelado'
-                        THEN 1 ELSE 0
-                    END
+                    CASE WHEN status = 'Cancelado'
+                    THEN 1 ELSE 0 END
                 ) AS cancelados
             FROM pedidos
         """)
@@ -208,18 +204,16 @@ def carregar_dados():
             for i in range(7)
         ]
 
-        dados_diarios = pd.DataFrame(
-            {
-                "Pedidos": [
-                    pedidos_por_dia.get(data.isoformat(), 0)
-                    for data in datas_periodo
-                ]
-            },
-            index=[
+        dados_diarios = pd.DataFrame({
+            "Dia": [
                 data.strftime("%d/%m")
                 for data in datas_periodo
+            ],
+            "Pedidos": [
+                pedidos_por_dia.get(data.isoformat(), 0)
+                for data in datas_periodo
             ]
-        )
+        })
 
         cursor.execute("""
             SELECT
@@ -245,13 +239,13 @@ def carregar_dados():
             "Cancelado"
         ]
 
-        dados_status = [
+        dados_status = pd.DataFrame([
             {
                 "Status": status,
                 "Quantidade": quantidade_status.get(status, 0)
             }
             for status in status_conhecidos
-        ]
+        ])
 
         cursor.execute("""
             SELECT
@@ -266,13 +260,13 @@ def carregar_dados():
             LIMIT 5
         """)
 
-        produtos_populares = [
+        produtos_populares = pd.DataFrame([
             {
                 "Prato": linha["produto_nome"],
                 "Quantidade": linha["quantidade"]
             }
             for linha in cursor.fetchall()
-        ]
+        ])
 
         cursor.execute("""
             SELECT
@@ -461,45 +455,59 @@ st.divider()
 
 st.subheader("Acompanhamento dos pedidos")
 
-col1, col2 = st.columns(2)
+st.markdown("##### Pedidos nos últimos 7 dias")
 
-with col1:
-    st.markdown("##### Pedidos nos últimos 7 dias")
+st.bar_chart(
+    dados["dados_diarios"],
+    x="Dia",
+    y="Pedidos",
+    color="#8F302B",
+    height=280,
+    width="stretch",
+    sort=False
+)
 
-    st.line_chart(
-        dados["dados_diarios"],
-        use_container_width=True
-    )
-
-with col2:
-    st.markdown("##### Distribuição por status")
-
-    grafico_status = pd.DataFrame(
-        dados["dados_status"]
-    ).set_index("Status")
-
-    st.bar_chart(
-        grafico_status,
-        use_container_width=True
-    )
+st.caption(
+    "Quantidade de pedidos registrados em cada dia, considerando "
+    "o horário de Brasília."
+)
 
 st.divider()
 
-st.subheader("Pratos mais pedidos")
+col1, col2 = st.columns(2)
 
-if dados["produtos_populares"]:
-
-    grafico_produtos = pd.DataFrame(
-        dados["produtos_populares"]
-    ).set_index("Prato")
+with col1:
+    st.markdown("##### Pedidos por status")
 
     st.bar_chart(
-        grafico_produtos,
-        use_container_width=True
+        dados["dados_status"],
+        x="Status",
+        y="Quantidade",
+        color="#8F302B",
+        horizontal=True,
+        height=320,
+        width="stretch",
+        sort=False
     )
 
-else:
-    st.info("Ainda não existem pedidos com pratos registrados.")
+with col2:
+    st.markdown("##### Pratos mais pedidos")
+
+    if not dados["produtos_populares"].empty:
+
+        st.bar_chart(
+            dados["produtos_populares"],
+            x="Prato",
+            y="Quantidade",
+            color="#8F302B",
+            horizontal=True,
+            height=320,
+            width="stretch",
+            sort=False
+        )
+
+    else:
+        st.info("Ainda não existem pedidos com pratos registrados.")
 
 st.divider()
 
