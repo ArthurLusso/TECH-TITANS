@@ -291,37 +291,54 @@ def editar_variacao(
         conexao.close()
 
 
-def remover_variacao(variacao_id):
 
+def remover_variacao(variacao_id):
     conexao = conectar()
 
     try:
-        historico = conexao.execute(
-            """
+        cursor = conexao.cursor()
+
+        cursor.execute("""
             SELECT id
-            FROM movimentacoes_variacoes
-            WHERE variacao_id = ?
-            LIMIT 1
-            """,
-            (variacao_id,)
-        ).fetchone()
+            FROM variacoes_ingrediente
+            WHERE id = ?
+        """, (variacao_id,))
 
-        if historico:
-            raise ValueError(
-                "Essa variação possui histórico de movimentações "
-                "e não pode ser removida."
-            )
+        variacao = cursor.fetchone()
 
-        resultado = conexao.execute(
-            """
+        if variacao is None:
+            raise ValueError("Variação não encontrada.")
+
+        cursor.execute("""
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+        """)
+
+        tabelas_existentes = {
+            linha["name"]
+            for linha in cursor.fetchall()
+        }
+
+        if "produto_variacoes" in tabelas_existentes:
+            cursor.execute("""
+                DELETE FROM produto_variacoes
+                WHERE variacao_id = ?
+            """, (variacao_id,))
+
+        if "movimentacoes_variacoes" in tabelas_existentes:
+            cursor.execute("""
+                DELETE FROM movimentacoes_variacoes
+                WHERE variacao_id = ?
+            """, (variacao_id,))
+
+        cursor.execute("""
             DELETE FROM variacoes_ingrediente
             WHERE id = ?
-            """,
-            (variacao_id,)
-        )
+        """, (variacao_id,))
 
-        if resultado.rowcount == 0:
-            raise ValueError("Variação não encontrada.")
+        if cursor.rowcount == 0:
+            raise ValueError("Não foi possível excluir a variação.")
 
         conexao.commit()
 
@@ -331,6 +348,7 @@ def remover_variacao(variacao_id):
 
     finally:
         conexao.close()
+
 
 
 def movimentar_estoque(

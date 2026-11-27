@@ -22,14 +22,15 @@ copy2(BANCO, BACKUP)
 
 print("Backup criado:", BACKUP.name)
 print()
-print("Esta operação apagará:")
+print("Serão apagados:")
 print("- Todos os pedidos e seus itens")
 print("- Todas as entregas")
 print("- Todos os cancelamentos")
 print("- Todos os pratos do cardápio")
-print("- Todos os vínculos entre pratos e ingredientes")
+print("- Todas as fichas técnicas")
+print("- Todos os registros de baixa de estoque dos pedidos")
 print()
-print("O estoque e seus históricos serão preservados.")
+print("O estoque e seu histórico serão preservados.")
 print()
 
 confirmacao = input(
@@ -44,21 +45,33 @@ if confirmacao != "APAGAR":
 conexao = conectar()
 
 try:
-    conexao.execute("PRAGMA foreign_keys = ON")
+    tabelas = [
+        "cancelamentos",
+        "baixas_estoque_pedido",
+        "entregas",
+        "itens_pedido",
+        "produto_ingredientes",
+        "produto_variacoes",
+        "pedidos",
+        "produtos"
+    ]
+
+    existentes = {
+        linha[0]
+        for linha in conexao.execute("""
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+        """).fetchall()
+    }
 
     with conexao:
 
-        tabelas = [
-            "cancelamentos",
-            "entregas",
-            "itens_pedido",
-            "produto_ingredientes",
-            "pedidos",
-            "produtos"
-        ]
-
         for tabela in tabelas:
-            conexao.execute(f"DELETE FROM {tabela}")
+            if tabela in existentes:
+                conexao.execute(
+                    f'DELETE FROM "{tabela}"'
+                )
 
         conexao.execute("""
             DELETE FROM sqlite_sequence
@@ -67,15 +80,16 @@ try:
                 'entregas',
                 'itens_pedido',
                 'pedidos',
-                'produtos'
+                'produtos',
+                'produto_variacoes'
             )
         """)
 
     print()
     print("Sistema limpo com sucesso!")
-    print("Os IDs dos registros também foram reiniciados.")
+    print("IDs reiniciados.")
     print("Estoque preservado.")
-    print("Backup disponível em:", BACKUP.name)
+    print("Backup disponível:", BACKUP.name)
 
 except Exception as erro:
     print("Erro ao limpar o banco:", erro)
